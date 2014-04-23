@@ -59,13 +59,13 @@ enum MajorType : ubyte
         FLOAT_SIMPLE     = 7 << 5
 }
 
-enum TAG : ubyte
+enum TAG : uint
 {
     NONE                        = 255,
 
-    TEXT_RU                     = 42,
+    TEXT_RU                     = 258,
 
-    TEXT_EN                     = 43,
+    TEXT_EN                     = 259,
 /** date/time values in the standard format (UTF8 string, RFC3339). */
     STANDARD_DATE_TIME          = 0,
 /** date/time values as Epoch timestamp (numeric, RFC3339). */
