@@ -59,9 +59,9 @@ enum MajorType : ubyte
         FLOAT_SIMPLE     = 7 << 5
 }
 
-enum TAG : uint
+enum TAG
 {
-    NONE                        = 255,
+    NONE                        = -1,
 
     TEXT_RU                     = 258,
 

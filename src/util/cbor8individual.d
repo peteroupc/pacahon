@@ -126,7 +126,7 @@ private void write_resources(string uri, ref Resources vv, ref OutBuffer ou)
         else
         {
             if (value.lang != LANG.NONE)
-                write_header(MajorType.TAG, value.lang + 41, ou);
+                write_header(MajorType.TAG, value.lang + 257, ou);
             write_string(value.data, ou);
         }
     }

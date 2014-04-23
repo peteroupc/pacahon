@@ -51,7 +51,7 @@ private void write_predicate(Predicate vv, ref OutBuffer ou)
         else
         {
             if (value.lang != LANG.NONE)
-                write_header(MajorType.TAG, value.lang + 41, ou);
+                write_header(MajorType.TAG, value.lang + 257, ou);
             write_string(value.literal, ou);
         }
     }
@@ -115,7 +115,7 @@ private static int read_element(ubyte[] src, Element *el, byte fields, Subject p
                                 res1.addPredicate(key.str, val.str);
                             }
                             else if (val.tag == TAG.TEXT_RU || val.tag == TAG.TEXT_EN)
-                                res1.addPredicate(key.str, val.str, cast(LANG)(el.tag - 41));
+                                res1.addPredicate(key.str, val.str, cast(LANG)(el.tag - 257));
                             else if (val.tag == TAG.URI)
                             {
 //                      writeln ("add as resource:", key.str, " : ", val.str);
@@ -158,7 +158,7 @@ private static int read_element(ubyte[] src, Element *el, byte fields, Subject p
                     if (arr_el.tag == TAG.NONE)
                         vals.addLiteral(arr_el.str);
                     else if (arr_el.tag == TAG.TEXT_RU || arr_el.tag == TAG.TEXT_EN)
-                        vals.addLiteral(arr_el.str, cast(LANG)(arr_el.tag - 41));
+                        vals.addLiteral(arr_el.str, cast(LANG)(arr_el.tag - 257));
                     else if (arr_el.tag == TAG.URI)
                     {
 //                      writeln ("#2 add as resource: ", arr_el.str);
