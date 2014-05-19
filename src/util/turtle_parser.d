@@ -4,22 +4,17 @@ private import std.string, std.c.stdlib, std.c.string, std.stdio, std.datetime, 
 
 private import util.utils;
 private import pacahon.know_predicates;
+private import pacahon.define;
 private import onto.lang;
-private import onto.sgraph;
+private import onto.individual;
+private import onto.resource;
 
 /*
  *  src - С-шная строка содержащая факты в формате n3 (ttl),
  *  len - длинна исходной строки,
  */
 
-enum ResourceType : ubyte
-{
-    Literal,
-    ExternalUri,
-    Unknown
-}
-
-public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] prefix_map)
+public Individual[] parse_turtle_string(char *src, int len, ref string[ string ] prefix_map)
 {
 //	StopWatch sw;
 //	sw.start();
@@ -35,12 +30,12 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
     char      ch            = *src;
     char      prev_ch       = 0;
 
-    Subjects  res = new Subjects();
+    Individual[]  res;
 
-    Subject[] subject_level   = new Subject[ 4 ];
+    Individual*[] subject_level   = new Individual*[ 4 ];
     string[]  predicate_level = new string[ 4 ];
     char      prev_el;
-    Subject   ss;
+    Individual   *ss;
     string    predicate;
     int       level = 0;
     byte      state = 0;
@@ -149,7 +144,8 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
                 char *end_el   = ptr;
                 //writeln ("2 CH0 [", *start_el, "]");
 
-                ResourceType resource_type = ResourceType.Unknown;
+                ResourceType resource_type = ResourceType.String;
+                ResourceOrigin resource_origin = ResourceOrigin.local;
 
                 // пропускаем термы в кавычках (" или """)
                 bool is_multiline_quote = false;
@@ -174,7 +170,7 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
                     {
                         if (ch == '"')
                         {
-                            resource_type = ResourceType.Literal;
+                            resource_type = ResourceType.String;
                             if (is_multiline_quote == true && end_el - src < len - 2 && *(end_el + 1) == '"' && *(end_el + 2) == '"')
                             {
                                 end_el += 2;
@@ -214,6 +210,8 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
                         ch = *end_el;
                     }
                 }
+                else
+                	resource_type = ResourceType.Uri;
 
 //				writeln("CH0:", ch, ", ", cast(int)ch);
 
@@ -250,7 +248,8 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
                     {
                         if (ch == '>')
                         {
-                            resource_type = ResourceType.ExternalUri;
+                            resource_type = ResourceType.Uri;
+                            resource_origin = ResourceOrigin.external;
                             break;
                         }
                         end_el++;
@@ -297,7 +296,7 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
                     ptr = end_el;
 
                     if (ss is null)
-                        ss = new Subject();
+                        ss = new Individual();
 
                     string out_predicate;
                     prev_el = next_element(start_el, length_el, ss, predicate, out_predicate, &state, resource_type, prefix_map);
@@ -308,10 +307,10 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
                     if (prev_el == '.')
                     {
 //						writeln ("@ add to res:", ss.subject);
-                        res.addSubject(ss);
+                        res ~= *ss;
                         predicate = null;
                         if (level == 0)
-                            ss = new Subject();
+                            ss = new Individual();
                     }
                     else if (prev_el == '[')
                     {
@@ -319,10 +318,10 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
                         predicate_level[ level ] = predicate;
                         level++;
 //						writeln ("@ ++ level !!!:", level, ", predicate=", predicate);
-                        ss = new Subject();
+                        ss = new Individual();
                         //ss.subject = "_:_";
                         UUID new_id = randomUUID();
-                        ss.subject = new_id.toString();
+                        ss.uri = new_id.toString();
                         state      = 1;
                     }
                     else if (prev_el == ']')
@@ -330,9 +329,10 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
                         level--;
                         predicate = predicate_level[ level ];
 //                      writeln ("@ ++ 1], predicate=", predicate, "=>", ss);
-                        Subject inner_subject = ss;
+                        Individual* inner_subject = ss;
                         ss = subject_level[ level ];
-                        ss.addPredicate(predicate, inner_subject);
+                        ss.resources[predicate] ~= Resource (inner_subject.uri, ResourceOrigin.local);
+                        // ss.addPredicate(predicate, inner_subject);
 //						writeln ("@ -- 2 level !!!:", level, ", ss=", ss);
                     }
                     else if (prev_el == ';')
@@ -366,10 +366,10 @@ public Subject[] parse_turtle_string(char *src, int len, ref string[ string ] pr
 //	 long t = cast(long) sw.peek().usecs;
 //	 writeln ("turtle parser [µs] ", t);
 
-    return res.data;
+    return res;
 }
 
-private char next_element(char *element, int el_length, Subject ss, string in_predicate, out string out_predicate, byte *state,
+private char next_element(char *element, int el_length, Individual* ss, string in_predicate, out string out_predicate, byte *state,
                           ResourceType resource_type, ref string[ string ] prefix_map)
 {
     if (element is null)
@@ -400,7 +400,7 @@ private char next_element(char *element, int el_length, Subject ss, string in_pr
         el_length -= 2;
     }
 
-    if (ss.subject is null)
+    if (ss.uri is null)
     {
         string uri = cast(immutable)element[ 0..el_length ];
 
@@ -411,7 +411,7 @@ private char next_element(char *element, int el_length, Subject ss, string in_pr
                 uri = tmp_uri;
         }
 
-        ss.subject = uri;
+        ss.uri = uri;
 //	    writeln ("@ add new subject=", ss.subject);
         *state        = 1;
         out_predicate = in_predicate;
@@ -425,13 +425,13 @@ private char next_element(char *element, int el_length, Subject ss, string in_pr
         if (cur_predicate == "a")
             cur_predicate = rdf__type;
 
-        Predicate pp = ss.getPredicate(cur_predicate);
-        if (pp is null)
-        {
-            pp           = new Predicate();
-            pp.predicate = cur_predicate;
-            ss.addPredicate(pp);
-        }
+  //      Resources pp = ss.resources.get(cur_predicate, Resources.init);
+  //      if (pp != Resources.init)
+  //      {
+  //          pp           = new Predicate();
+  //          pp.predicate = cur_predicate;
+  //          ss.addPredicate(pp);
+  //      }
         out_predicate = cur_predicate;
 //	    writeln ("@ add predicate=,", pp.predicate);
         return 0;
@@ -439,15 +439,17 @@ private char next_element(char *element, int el_length, Subject ss, string in_pr
 
     if (*state == 2)
     {
-        Predicate pp   = ss.getPredicate(in_predicate);
+        //Predicate pp   = ss.getPredicate(in_predicate);
         string    data = cast(immutable)element[ 0..el_length ];
         if (data.indexOf("\\\"") >= 0)
         {
             data = data.replace("\\\"", "\"");
 //              writeln ("@data=", data);
         }
+        
+        Resources pp = ss.resources.get (in_predicate, Resources.init);        
 
-        if (resource_type == ResourceType.Literal)
+        if (resource_type == ResourceType.String)
         {
             if (data[ $ - 3 ] == '@')
             {
@@ -458,7 +460,7 @@ private char next_element(char *element, int el_length, Subject ss, string in_pr
                     lang = LANG.EN;
                 el_length -= 4;
 
-                pp.addLiteral(data[ 0..$ - 4 ], lang);
+                pp ~= Resource(data[ 0..$ - 4 ], lang);
             }
             else if (data[ $ ] != '"')
             {
@@ -471,28 +473,39 @@ private char next_element(char *element, int el_length, Subject ss, string in_pr
                     string type = data[ end_pos_str + 3..$ ];
                     data = data[ 0..end_pos_str ];
 
-                    if (type == "xsd:nonNegativeInteger")
+                    if (type == "xsd:dateTime")
                     {
-//                      writeln ("LITERAL TYPE=", type);
-                        pp.addLiteral(data, OBJECT_TYPE.UNSIGNED_INTEGER);
+                        pp ~= Resource(ResourceType.Datetime, data);
+                    }
+                    else if (type == "xsd:date")
+                    {
+                        pp ~= Resource(ResourceType.Date, data);
+                    }
+                    else if (type == "xsd:boolean")
+                    {
+                        pp ~= Resource(ResourceType.Boolean, data);
+                    }
+                    else if (type == "xsd:nonNegativeInteger")
+                    {
+                        pp ~= Resource(ResourceType.Integer, data);
                     }
                     else if (type == "xsd:string")
                     {
-                        pp.addLiteral(data);
+                        pp ~= Resource(data);
                     }
                     else
                     {
-                        pp.addLiteral(data);
+                       pp ~= Resource(data);
                     }
                 }
                 else
                 {
-                    pp.addLiteral(data);
+                    pp ~= Resource(data);
                 }
             }
             else
             {
-                pp.addLiteral(data);
+                pp ~= Resource(data);
             }
         }
         else
@@ -504,9 +517,13 @@ private char next_element(char *element, int el_length, Subject ss, string in_pr
                     data = tmp_uri;
             }
 
-            pp.addLiteral(data, OBJECT_TYPE.URI);
+            pp ~= Resource(ResourceType.Uri, data);
 //            writeln ("addResource - ", ss.subject, " : ", pp.predicate, " : ", data);
         }
+        
+        //writeln ("@ pp =", pp);
+        ss.resources[in_predicate] = pp;
+        
 //	    writeln ("@ set object=", cast(immutable)element[ 0..el_length]);
         out_predicate = in_predicate;
         return 0;
@@ -519,14 +536,14 @@ private char next_element(char *element, int el_length, Subject ss, string in_pr
     return 0;
 }
 
-
-void toTurtle(Subject ss, ref OutBuffer outbuff, int level = 0, bool asCluster = false)
+/*
+void toTurtle(Individual ss, ref OutBuffer outbuff, int level = 0, bool asCluster = false)
 {
     for (int i = 0; i < level; i++)
         outbuff.write(cast(char[])"  ");
 
-    if (ss.subject !is null)
-        outbuff.write(ss.subject);
+    if (ss.uri !is null)
+        outbuff.write(ss.uri);
 
     foreach (pp; ss.getPredicates())
     {
@@ -542,7 +559,7 @@ void toTurtle(Subject ss, ref OutBuffer outbuff, int level = 0, bool asCluster =
             for (int i = 0; i < level; i++)
                 outbuff.write(cast(char[])" ");
 
-            if (oo.type == OBJECT_TYPE.TEXT_STRING)
+            if (oo.type == DataType.String)
             {
                 if (asCluster)
                     outbuff.write(cast(char[])"   \\\"");
@@ -605,18 +622,18 @@ void toTurtle(Subject ss, ref OutBuffer outbuff, int level = 0, bool asCluster =
                     outbuff.write(cast(char[])"@en");
                 }
             }
-            else if (oo.type == OBJECT_TYPE.URI)
+            else if (oo.type == DataType.Uri)
             {
                 outbuff.write(cast(char[])"   ");
                 outbuff.write(oo.literal);
             }
-            else if (oo.type == OBJECT_TYPE.LINK_SUBJECT)
+            else if (oo.type == DataType.LinkSubject)
             {
                 outbuff.write(cast(char[])"\n  [\n");
                 toTurtle(oo.subject, outbuff, level + 1);
                 outbuff.write(cast(char[])"\n  ]");
             }
-            else if (oo.type == OBJECT_TYPE.LINK_CLUSTER)
+            else if (oo.type == DataType.LinkCluster)
             {
                 outbuff.write(cast(char[])" \"\"\"");
                 foreach (s; oo.cluster.data)
@@ -643,7 +660,7 @@ void toTurtle(Subject ss, ref OutBuffer outbuff, int level = 0, bool asCluster =
     return;
 }
 
-void toTurtle(Subject[] results, ref OutBuffer outbuff, int level = 0)
+void toTurtle(ref Individual[] results, ref OutBuffer outbuff, int level = 0)
 {
     for (int ii = 0; ii < results.length; ii++)
     {
@@ -655,7 +672,7 @@ void toTurtle(Subject[] results, ref OutBuffer outbuff, int level = 0)
         }
     }
 }
-
+*/
 /*
    char* toTurtle(GraphCluster gcl)
    {

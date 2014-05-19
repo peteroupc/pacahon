@@ -10,11 +10,9 @@ private
 
     import io.mq_client;
     import util.container;
-    import util.json_ld_parser;
     import util.logger;
     import util.utils;
     import util.cbor;
-    import util.cbor8sgraph;
     import util.cbor8individual;
 
     import pacahon.know_predicates;
@@ -26,7 +24,6 @@ private
 
     import onto.owl;
     import onto.individual;
-    import onto.sgraph;
     import onto.resource;
     import storage.lmdb_storage;
     import az.acl;
@@ -77,9 +74,9 @@ class PThreadContext : Context
 
     this(string property_file_path, string context_name)
     {
-        inividuals_storage = new LmdbStorage(individuals_db_path);
-        tickets_storage    = new LmdbStorage(tickets_db_path);
-        acl_indexes        = new Authorization(acl_indexes_db_path);
+        inividuals_storage = new LmdbStorage(individuals_db_path, DBMode.R);
+        tickets_storage    = new LmdbStorage(tickets_db_path, DBMode.R);
+        acl_indexes        = new Authorization(acl_indexes_db_path, DBMode.R);
 
         name = context_name;
 
@@ -290,6 +287,11 @@ class PThreadContext : Context
             return (immutable(Individual)[ string ]).init;
     }
 
+
+    public string get_individual_as_cbor(string uri)
+    {
+        return inividuals_storage.find(uri);
+    }
 ///////////////////////////////////////////// oykumena ///////////////////////////////////////////////////
 
     public void push_signal(string key, long value)
@@ -352,15 +354,6 @@ class PThreadContext : Context
         return res;
     }
 
-    public void store_subject(Subject ss, bool prepareEvents = true)
-    {
-        string     ss_as_cbor = subject2cbor(ss);
-        Individual indv;
-
-        cbor2individual(&indv, ss_as_cbor);
-        store_individual(null, &indv, ss_as_cbor, prepareEvents);
-    }
-
     public int[ string ] get_key2slot()
     {
         int[ string ] key2slot;
@@ -382,16 +375,6 @@ class PThreadContext : Context
         return key2slot;
     }
 
-    public Subject get_subject(string uri)
-    {
-        return inividuals_storage.find_subject(uri);
-    }
-
-    public string get_subject_as_cbor(string uri)
-    {
-        return inividuals_storage.find(uri);
-    }
-
     ref string[ string ] get_prefix_map()
     {
         return prefix_map;
@@ -402,16 +385,16 @@ class PThreadContext : Context
         return _vql;
     }
 
-    private void subject2Ticket(Subject ticket, Ticket *tt)
+    private void subject2Ticket(ref Individual ticket, Ticket *tt)
     {
         string when;
         long   duration;
 
-        tt.id       = ticket.subject;
-        tt.user_uri = ticket.getFirstLiteral(ticket__accessor);
-        when        = ticket.getFirstLiteral(ticket__when);
-        string dd = ticket.getFirstLiteral(ticket__duration);
-        duration = parse!uint (dd);
+        tt.id       = ticket.uri;
+        tt.user_uri = ticket.getFirstResource(ticket__accessor).data;
+        when        = ticket.getFirstResource(ticket__when).data;
+        string dd   = ticket.getFirstResource(ticket__duration).data;
+        duration    = parse!uint (dd);
 
 //				writeln ("tt.userId=", tt.userId);
 
@@ -602,39 +585,46 @@ class PThreadContext : Context
 
         try
         {
-            if (trace_msg[ 18 ] == 1)        	
-            	log.trace ("authenticate, login=[%s] password=[%s]", login, password);
+            if (trace_msg[ 18 ] == 1)
+                log.trace("authenticate, login=[%s] password=[%s]", login, password);
 
-            Ticket          ticket;
+            Ticket                  ticket;
             ticket.result = ResultCode.Authentication_Failed;
-            Ticket          *sys_ticket;
+            Ticket                  *sys_ticket;
 
             immutable(Individual)[] candidate_users = get_individuals_via_query(sys_ticket,
                                                                                 "'" ~ veda_schema__login ~ "' == '" ~ login ~ "'");
+            if (trace_msg[ 18 ] == 1)
+               	log.trace("authenticate, candidate_users=[%s]", candidate_users);
+
             foreach (user; candidate_users)
             {
                 string user_id = user.getFirstResource(veda_schema__owner).uri;
                 if (user_id is null)
                     continue;
 
+                if (trace_msg[ 18 ] == 1)
+                	log.trace("authenticate, user_id=[%s]", user_id);
+
+
                 iResources pass = user.resources.get(veda_schema__password, _empty_iResources);
                 if (pass.length > 0 && pass[ 0 ].data == password)
                 {
-                    Subject new_ticket = new Subject;
-                    new_ticket.addPredicate(rdf__type, ticket__Ticket);
+                    Individual new_ticket;
+                    new_ticket.resources[rdf__type] ~= Resource(ticket__Ticket);
 
                     UUID new_id = randomUUID();
-                    new_ticket.subject = new_id.toString();
+                    new_ticket.uri = new_id.toString();
 
-                    new_ticket.addPredicate(ticket__accessor, user_id);
-                    new_ticket.addPredicate(ticket__when, getNowAsString());
-                    new_ticket.addPredicate(ticket__duration, "40000");
+                    new_ticket.resources[ticket__accessor] ~= Resource(user_id);
+                    new_ticket.resources[ticket__when] ~= Resource(getNowAsString());
+                    new_ticket.resources[ticket__duration] ~= Resource("40000");
 
-                    if (trace_msg[ 18 ] == 1)        	
-                    	log.trace ("authenticate, ticket__accessor=%s", user_id);
+                    if (trace_msg[ 18 ] == 1)
+                        log.trace("authenticate, ticket__accessor=%s", user_id);
 
                     // store ticket
-                    string ss_as_cbor = subject2cbor(new_ticket);
+                    string ss_as_cbor = individual2cbor(&new_ticket);
 
                     Tid    tid_ticket_manager = getTid(P_MODULE.ticket_manager);
 
@@ -657,8 +647,8 @@ class PThreadContext : Context
                     return ticket;
                 }
             }
-            
-           	log.trace ("fail authenticate, login=[%s] password=[%s]", login, password);
+
+            log.trace("fail authenticate, login=[%s] password=[%s]", login, password);
 
             ticket.result = ResultCode.Authentication_Failed;
             return ticket;
@@ -686,23 +676,23 @@ class PThreadContext : Context
                 if (ticket_str !is null && ticket_str.length > 128)
                 {
                     tt = new Ticket;
-                    Subject ticket = cbor2subject(ticket_str);
+                    Individual ticket;
+                    cbor2individual(&ticket, ticket_str);
                     subject2Ticket(ticket, tt);
                     tt.result               = ResultCode.OK;
                     user_of_ticket[ tt.id ] = tt;
 
                     if (trace_msg[ 17 ] == 1)
-                    	log.trace("тикет найден в базе, id=%s", ticket_id);
+                        log.trace("тикет найден в базе, id=%s", ticket_id);
                 }
                 else
                 {
-                    tt = new Ticket;
+                    tt        = new Ticket;
                     tt.result = ResultCode.Ticket_expired;
-                    
+
                     if (trace_msg[ 17 ] == 1)
-                    	log.trace("тикет не найден в базе, id=%s", ticket_id);
-                }    
-                
+                        log.trace("тикет не найден в базе, id=%s", ticket_id);
+                }
             }
             else
             {
@@ -751,11 +741,20 @@ class PThreadContext : Context
 
     public immutable(Individual)[] get_individuals_via_query(Ticket * ticket, string query_str)
     {
+        immutable(Individual)[] res;
+        
         StopWatch sw; sw.start;
+
+        if (trace_msg[ 26 ] == 1)
+        {
+            if (ticket !is null)
+                log.trace("get_individuals_via_query: start, query_str=%s, ticket=%s", query_str, ticket.id);
+            else
+                log.trace("get_individuals_via_query: start, query_str=%s, ticket=null", query_str);
+        }
 
         try
         {
-            immutable(Individual)[] res;
             if (query_str.indexOf("==") <= 0)
                 query_str = "'*' == '" ~ query_str ~ "'";
 
@@ -765,6 +764,9 @@ class PThreadContext : Context
         finally
         {
             stat(CMD.GET, sw);
+
+            if (trace_msg[ 26 ] == 1)
+                log.trace("get_individuals_via_query: end, query_str=%s, found=%d", query_str, res.length);
         }
     }
 
@@ -781,7 +783,7 @@ class PThreadContext : Context
                 if (acl_indexes.authorize(uri, ticket, Access.can_read) == true)
                 {
                     Individual individual         = Individual.init;
-                    string     individual_as_cbor = get_subject_as_cbor(uri);
+                    string     individual_as_cbor = get_individual_as_cbor(uri);
 
                     if (individual_as_cbor !is null && individual_as_cbor.length > 1)
                         cbor2individual(&individual, individual_as_cbor);
@@ -804,11 +806,11 @@ class PThreadContext : Context
 
         if (trace_msg[ 25 ] == 1)
         {
-        	if (ticket !is null)
-        		log.trace("get_individual, uri=%s, ticket=%s", uri, ticket.id);
-        	else	
-        		log.trace("get_individual, uri=%s, ticket=null", uri);
-        }	
+            if (ticket !is null)
+                log.trace("get_individual, uri=%s, ticket=%s", uri, ticket.id);
+            else
+                log.trace("get_individual, uri=%s, ticket=null", uri);
+        }
 
         try
         {
@@ -816,28 +818,36 @@ class PThreadContext : Context
 
             if (acl_indexes.authorize(uri, ticket, Access.can_read) == true)
             {
-                string individual_as_cbor = get_subject_as_cbor(uri);
+                string individual_as_cbor = get_individual_as_cbor(uri);
 
                 if (individual_as_cbor !is null && individual_as_cbor.length > 1)
+                {
                     cbor2individual(&individual, individual_as_cbor);
+                    individual.setStatus(ResultCode.OK);
+                }
+                else
+                    individual.setStatus(ResultCode.Unprocessable_Entity);
             }
             else
             {
-            	if (trace_msg[ 25 ] == 1)
-            		log.trace("not authorized: get_individual, uri=%s, ticket=%s", uri, ticket.id);
+                if (trace_msg[ 25 ] == 1)
+                    log.trace("get_individual, not authorized, uri=%s", uri);
+                individual.setStatus(ResultCode.Not_Authorized);
             }
             return individual;
         }
         finally
         {
             stat(CMD.GET, sw);
+            if (trace_msg[ 25 ] == 1)
+                log.trace("get_individual: end, uri=%s", uri);
         }
     }
 
     public ResultCode store_individual(Ticket *ticket, Individual *indv, string ss_as_cbor, bool prepareEvents = true)
     {
         StopWatch sw; sw.start;
-
+        
         try
         {
             Tid tid_subject_manager;
@@ -859,10 +869,12 @@ class PThreadContext : Context
             if (indv is null && ss_as_cbor is null)
                 return ResultCode.No_Content;
 
-            Resource[ string ] rdfType;
-            setHashResources(indv.resources[ rdf__type ], rdfType);
-            //writeln ("@ put_individual:", indv.uri);
+            if (trace_msg[ 27 ] == 1)
+            	log.trace ("store_individual: %s", *indv);
 
+            Resource[ string ] rdfType;
+            setMapResources(indv.resources[ rdf__type ], rdfType);
+            
             if (rdfType.anyExist(veda_schema__Membership) == true)
             {
                 // before storing the data, expected availability acl_manager.
@@ -891,6 +903,9 @@ class PThreadContext : Context
                                 ev = _ev;
                         });
             }
+
+            if (ev == EVENT.NOT_READY)
+                return ResultCode.Not_Ready;
 
             if (ev == EVENT.CREATE || ev == EVENT.UPDATE)
             {
@@ -956,7 +971,7 @@ class PThreadContext : Context
 
     public void set_trace(int idx, bool state)
     {
-    	writeln ("set trace idx=", idx, ":", state);
+        writeln("set trace idx=", idx, ":", state);
         foreach (mid; is_traced_module.keys)
         {
             Tid tid = getTid(mid);
@@ -965,5 +980,93 @@ class PThreadContext : Context
         }
 
         pacahon.log_msg.set_trace(idx, state);
+    }
+
+    public bool backup(int level = 0)
+    {
+    	if (level == 0)
+    		freeze ();
+    	   	
+        bool result = false;
+
+        Tid  tid_subject_manager = getTid(P_MODULE.subject_manager);
+
+        send(tid_subject_manager, CMD.BACKUP, "", thisTid);
+        string backup_id;
+        receive((string res) { backup_id = res; });
+
+        if (backup_id != "")
+        {
+            result = true;
+
+            string res;
+            Tid    tid_acl_manager = getTid(P_MODULE.acl_manager);
+            send(tid_acl_manager, CMD.BACKUP, backup_id, thisTid);
+            receive((string _res) { res = _res; });
+            if (res == "")
+                result = false;
+            else
+            {
+                Tid tid_ticket_manager = getTid(P_MODULE.ticket_manager);
+                send(tid_ticket_manager, CMD.BACKUP, backup_id, thisTid);
+                receive((string _res) { res = _res; });
+                if (res == "")
+                    result = false;
+                else
+                {
+                    Tid tid_fulltext_indexer = getTid(P_MODULE.fulltext_indexer);
+                    send(tid_fulltext_indexer, CMD.BACKUP, backup_id, thisTid);
+                    receive((string _res) { res = _res; });
+                    if (res == "")
+                        result = false;
+                }
+            }
+        }
+
+        if (result == false)
+        {
+            if (level < 10)
+            {
+                log.trace_log_and_console("BACKUP FAIL, repeat(%d) %s", level, backup_id);
+
+                core.thread.Thread.sleep(dur!("msecs")(500));
+                return backup(level + 1);
+            }
+            else
+                log.trace_log_and_console("BACKUP FAIL, %s", backup_id);
+        }
+        else
+            log.trace_log_and_console("BACKUP Ok, %s", backup_id);
+
+    	if (level == 0)
+    		unfreeze ();
+
+        return result;
+    }
+
+    public long count_individuals()
+    {
+        return inividuals_storage.count_entries();
+    }
+
+    public void freeze()
+    {
+        Tid tid_subject_manager = getTid(P_MODULE.subject_manager);
+
+        if (tid_subject_manager != Tid.init)
+        {
+            send(tid_subject_manager, CMD.FREEZE, thisTid);
+            receive((bool _res) {});            
+        }
+    }
+
+    public void unfreeze()
+    {
+        Tid tid_subject_manager = getTid(P_MODULE.subject_manager);
+
+        if (tid_subject_manager != Tid.init)
+        {
+            send(tid_subject_manager, CMD.UNFREEZE);
+        }
     }
 }

@@ -6,7 +6,6 @@ private import util.container;
 private import search.vel;
 private import onto.owl;
 private import onto.individual;
-private import onto.sgraph;
 private import pacahon.define;
 
 private import bind.v8d_header;
@@ -22,8 +21,11 @@ enum CMD : byte
     COMMIT    = 16,
     END_DATA  = 32,
     SET_TRACE = 33,
-    NOP       = 64,
-    RELOAD    = 65
+    RELOAD    = 40,
+    BACKUP    = 41,
+    FREEZE    = 42,
+    UNFREEZE  = 43,
+    NOP       = 64
 }
 
 enum P_MODULE : byte
@@ -45,7 +47,7 @@ enum P_MODULE : byte
 
 enum ResultCode
 {
-	zero				  = 0,
+    zero                  = 0,
     OK                    = 200,
     Created               = 201,
     No_Content            = 204,
@@ -56,6 +58,7 @@ enum ResultCode
     Ticket_expired        = 471,
     Not_Authorized        = 472,
     Authentication_Failed = 473,
+    Not_Ready             = 474,
     Internal_Server_Error = 500,
     Not_Implemented       = 501,
     Service_Unavailable   = 503,
@@ -100,17 +103,15 @@ interface Context
 
     @property search.vql.VQL vql();
 
-    bool authorize(string uri, Ticket *ticket, Access request_acess);
-
     ref string[ string ] get_prefix_map();
 
-    Subject get_subject(string uid);
-    string get_subject_as_cbor(string uid);
+//    Subject get_subject(string uid);
+    string get_individual_as_cbor(string uid);
 
     int[ string ] get_key2slot();
     long get_last_update_time();
 
-    void store_subject(Subject ss, bool prepareEvents = true);
+//    void store_subject(Subject ss, bool prepareEvents = true);
     public bool check_for_reload(string interthread_signal_id, void delegate() load);
 
     /////////////////////////////////////////// <- oykumena -> ///////////////////////////////////////////////
@@ -120,9 +121,11 @@ interface Context
     string look_string_signal(string key);
 
     // *************************************************** external api *********************************** //
+    bool authorize(string uri, Ticket *ticket, Access request_acess);
 
     public string[ 2 ] execute_script(string str);
 
+    //////////////////////////////////////////////////// ONTO //////////////////////////////////////////////
     public immutable(Class)[ string ] get_owl_classes();
     public immutable(Individual)[ string ] get_onto_as_map_individuals();
     public Class *get_class(string ur);
@@ -135,8 +138,8 @@ interface Context
     ////////////////////////////////////////////// INDIVIDUALS IO ////////////////////////////////////////////
     public immutable(Individual)[] get_individuals_via_query(Ticket * ticket, string query_str);
     public immutable(string)[]     get_individuals_ids_via_query(Ticket * ticket, string query_str);
-    public Individual get_individual(Ticket *ticket, string uri);
-    public Individual[]            get_individuals(Ticket *ticket, string[] uris);
+    public Individual               get_individual(Ticket *ticket, string uri);
+    public Individual[]             get_individuals(Ticket *ticket, string[] uris);
 
     public ResultCode store_individual(Ticket *ticket, Individual *indv, string ss_as_cbor, bool prepareEvents = true);
     public ResultCode put_individual(Ticket *ticket, string uri, Individual individual);
@@ -144,5 +147,11 @@ interface Context
 
     public void wait_thread(P_MODULE thread_id);
     public void set_trace(int idx, bool state);
+
+    public long count_individuals();
+    
+    public bool backup(int level = 0);
+    public void freeze();
+    public void unfreeze();
 }
 

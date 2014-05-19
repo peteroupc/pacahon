@@ -5,8 +5,8 @@ import std.concurrency;
 
 enum CNAME : byte
 {
-    COUNT_PUT    	 = 0,
-    COUNT_GET    	 = 1,
+    COUNT_PUT        = 0,
+    COUNT_GET        = 1,
     WORKED_TIME      = 2,
     LAST_UPDATE_TIME = 3,
     KEY2SLOT         = 4
@@ -32,7 +32,11 @@ enum DataType : ubyte
     String   = 2,
     Integer  = 4,
     Datetime = 8,
-    Float    = 16
+    Date	 = 16,
+    Float    = 32,
+    Bool	 = 64,
+    LinkCluster	 = 128,
+    LinkSubject	 = 129
 }
 
 enum EVENT : byte
@@ -41,7 +45,8 @@ enum EVENT : byte
     UPDATE = 2,
     REMOVE = 3,
     NONE   = 4,
-    ERROR  = 5
+    ERROR  = 5,
+    NOT_READY = 6
 }
 
 enum Access : ubyte
@@ -56,7 +61,52 @@ enum Access : ubyte
     cant_delete = 128
 }
 
-
+const string dbs_backup          = "./backup";
+const string dbs_data            = "./data";
 const string individuals_db_path = "./data/lmdb-individuals";
 const string tickets_db_path     = "./data/lmdb-tickets";
 const string acl_indexes_db_path = "./data/acl-indexes";
+
+import std.file;
+void create_folder_struct()
+{
+    try
+    {
+        mkdir(dbs_data);
+    }
+    catch (Exception ex)
+    {
+    }
+
+    try
+    {
+        mkdir(individuals_db_path);
+    }
+    catch (Exception ex)
+    {
+    }
+
+    try
+    {
+        mkdir(tickets_db_path);
+    }
+    catch (Exception ex)
+    {
+    }
+
+    try
+    {
+        mkdir(acl_indexes_db_path);
+    }
+    catch (Exception ex)
+    {
+    }
+
+    try
+    {
+        mkdir(dbs_backup);
+    }
+    catch (Exception ex)
+    {
+    }
+}

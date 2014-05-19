@@ -43,9 +43,9 @@ static this()
 
 class Authorization : LmdbStorage
 {
-    this(string _path)
+    this(string _path, DBMode mode)
     {
-        super(_path);
+        super(_path, mode);
     }
 
     bool isExistMemberShip(Individual *membership)
@@ -108,7 +108,7 @@ class Authorization : LmdbStorage
         {
             if (canXXX !is Resource.init)
             {
-                if (canXXX.data == "true")
+                if (canXXX.data == "1")
                 {
                     count_new_bits++;
                     if (access & true_bit_pos)
@@ -160,6 +160,9 @@ class Authorization : LmdbStorage
     {
         if (ticket is null)
             return true;
+
+        if (trace_msg[ 111 ] == 1)
+            log.trace("authorize %s", uri);
 
         bool    isAccessAllow = false;
 
@@ -218,11 +221,12 @@ class Authorization : LmdbStorage
             }
             subject_groups ~= ticket.user_uri;
 
-            //writeln("------------------------");
-            //writeln("@authorize:uri=", uri);
-            //writeln("@authorize:user_uri=", ticket.user_uri);
-            //writeln("@authorize:subject_groups=", subject_groups);
-            //writeln("@authorize:object_groups=", object_groups);
+            if (trace_msg[ 113 ] == 1)
+            {
+            	log.trace("user_uri=%s", ticket.user_uri);
+            	log.trace("subject_groups=%s", text(subject_groups));
+            	log.trace("object_groups=%s", text (object_groups));
+            }  	
 
             foreach (subject_group; subject_groups)
             {
@@ -236,7 +240,9 @@ class Authorization : LmdbStorage
                         {
                             // 3. поиск подходящего acl
                             string acl_key = object_group ~ "+" ~ subject_group;
-                            //writeln("@authorize:acl_key=", acl_key);
+
+                            if (trace_msg[ 112 ] == 1)
+                               	log.trace("look acl_key: [%s]", acl_key);
 
                             key.mv_size = acl_key.length;
                             key.mv_data = cast(char *)acl_key;
@@ -245,6 +251,10 @@ class Authorization : LmdbStorage
                             if (rc == 0)
                             {
                                 str = cast(string)(data.mv_data[ 0..data.mv_size ]);
+
+                                if (trace_msg[ 112 ] == 1)
+                                	log.trace("for [%s] found %s", acl_key, str);
+                                
                                 if (str !is null && str.length > 0 && (str[ 0 ] && request_access) == true)
                                 {
                                     isAccessAllow = true;
@@ -258,20 +268,29 @@ class Authorization : LmdbStorage
             }
         }catch (Exception ex)
         {
+            writeln("EX!,", ex.msg);
         }
         finally
         {
             mdb_txn_abort(txn_r);
+
+            if (trace_msg[ 111 ] == 1)
+                log.trace("authorize %s, result=%s", uri, text(isAccessAllow));
         }
+
         return isAccessAllow;
     }
 }
 
-void acl_manager(string thread_name)
+void acl_manager(string thread_name, string db_path)
 {
+    int size_bin_log     = 0;
+    int max_size_bin_log = 10_000_000;
+
     core.thread.Thread.getThis().name = thread_name;
 //    writeln("SPAWN: acl manager");
-    LmdbStorage storage = new LmdbStorage(acl_indexes_db_path);
+    LmdbStorage storage      = new LmdbStorage(acl_indexes_db_path, DBMode.RW);
+    string      bin_log_name = get_new_binlog_name(db_path);
 
     // SEND ready
     receive((Tid tid_response_reciever)
@@ -291,16 +310,17 @@ void acl_manager(string thread_name)
                 (CMD cmd, EVENT type, string msg)
                 {
                     if (cmd == CMD.STORE)
-                    {
+                    {                    	
                         Individual ind;
                         cbor2individual(&ind, msg);
-
-                        //writeln ("ACL: ", ind);
 
                         Resources rdfType = ind.resources[ rdf__type ];
 
                         if (rdfType.anyExist(veda_schema__PermissionStatement) == true)
                         {
+                        	if (trace_msg[ 114 ] == 1)
+                        		log.trace("store PermissionStatement: [%s]", ind);
+                        		                    	
                             Resource permissionObject = ind.getFirstResource(veda_schema__permissionObject);
                             Resource permissionSubject = ind.getFirstResource(veda_schema__permissionSubject);
 
@@ -316,7 +336,7 @@ void acl_manager(string thread_name)
                             Resource canCreate = ind.getFirstResource(veda_schema__canCreate);
                             if (canCreate !is Resource.init)
                             {
-                                if (canCreate.data == "true")
+                                if (canCreate.data == "1")
                                     access = access | Access.can_create;
                                 else
                                     access = access | Access.cant_create;
@@ -325,7 +345,7 @@ void acl_manager(string thread_name)
                             Resource canDelete = ind.getFirstResource(veda_schema__canDelete);
                             if (canDelete !is Resource.init)
                             {
-                                if (canDelete.data == "true")
+                                if (canDelete.data == "1")
                                     access = access | Access.can_delete;
                                 else
                                     access = access | Access.cant_delete;
@@ -334,7 +354,7 @@ void acl_manager(string thread_name)
                             Resource canRead = ind.getFirstResource(veda_schema__canRead);
                             if (canRead !is Resource.init)
                             {
-                                if (canRead.data == "true")
+                                if (canRead.data == "1")
                                     access = access | Access.can_read;
                                 else
                                     access = access | Access.cant_read;
@@ -343,7 +363,7 @@ void acl_manager(string thread_name)
                             Resource canUpdate = ind.getFirstResource(veda_schema__canUpdate);
                             if (canUpdate !is Resource.init)
                             {
-                                if (canUpdate.data == "true")
+                                if (canUpdate.data == "1")
                                     access = access | Access.can_update;
                                 else
                                     access = access | Access.cant_update;
@@ -352,10 +372,13 @@ void acl_manager(string thread_name)
                             storage.put(permissionObject.uri ~ "+" ~ permissionSubject.uri, "" ~ access);
 
                             if (trace_msg[ 100 ] == 1)
-                            	log.trace("[index] ++ ACL: %s+%s", permissionObject.uri, permissionSubject.uri);
+                                log.trace("[index] ++ ACL: %s+%s %s", permissionObject.uri, permissionSubject.uri, text (access));
                         }
                         else if (rdfType.anyExist(veda_schema__Membership) == true)
                         {
+                        	if (trace_msg[ 114 ] == 1)
+                        		log.trace("store Membership: [%s]", ind);
+                        	
                             bool[ string ] add_memberOf;
                             Resources resource = ind.getResources(veda_schema__resource);
                             Resources memberOf = ind.getResources(veda_schema__memberOf);
@@ -387,7 +410,7 @@ void acl_manager(string thread_name)
                                 storage.put(rs.uri, outbuff.toString());
 
                                 if (trace_msg[ 101 ] == 1)
-                                	log.trace("[index] ++ MemberShip: %s : %s", rs.uri, outbuff.toString());
+                                    log.trace("[index] ++ MemberShip: %s : %s", rs.uri, outbuff.toString());
                             }
                         }
                     }
@@ -401,7 +424,35 @@ void acl_manager(string thread_name)
                 },
                 (CMD cmd, string msg, Tid tid_response_reciever)
                 {
-                    if (cmd == CMD.AUTHORIZE)
+                    if (cmd == CMD.BACKUP)
+                    {
+                        try
+                        {
+                            string backup_id;
+                            if (msg.length > 0)
+                                backup_id = msg;
+
+                            if (backup_id is null)
+                                backup_id = "0";
+
+                            Result res = storage.backup(backup_id);
+                            if (res == Result.Ok)
+                            {
+                                size_bin_log = 0;
+                                bin_log_name = get_new_binlog_name(db_path);
+                            }
+                            else if (res == Result.Err)
+                            {
+                                backup_id = "";
+                            }
+                            send(tid_response_reciever, backup_id);
+                        }
+                        catch (Exception ex)
+                        {
+                            send(tid_response_reciever, "");
+                        }
+                    }
+                    else if (cmd == CMD.AUTHORIZE)
                     {
 //                            writeln ("is AUTHORIZE msg=[", msg, "]");
                         Individual ind;

@@ -1,15 +1,17 @@
 module onto.resource;
 
 import onto.lang;
+import pacahon.define;
 
 enum ResourceType : ubyte
 {
-    Uri      = 1,
-    String   = 2,
-    Integer  = 4,
-    Datetime = 8,
-    Float    = 16,
-    Boolean  = 32
+    Uri      = DataType.Uri,
+    String   = DataType.String,
+    Integer  = DataType.Integer,
+    Datetime = DataType.Datetime,
+    Date	 = DataType.Date,
+    Float    = DataType.Float,
+    Boolean	 = DataType.Bool    	
 }
 
 enum ResourceOrigin : ubyte
@@ -23,7 +25,7 @@ alias immutable(Resource)[] iResources;
 Resources                   _empty_Resources  = Resources.init;
 iResources                  _empty_iResources = iResources.init;
 
-public void setHashResources(Resources rss, ref Resource[ string ] hrss)
+public void setMapResources(Resources rss, ref Resource[ string ] hrss)
 {
     foreach (rs; rss)
         hrss[ rs.data ] = rs;
@@ -55,6 +57,8 @@ struct Resource
     ResourceOrigin origin = ResourceOrigin.local;
 
     string         data;
+//    bool		   bool_data;	
+    
     LANG           lang = LANG.NONE;
 
     this(string str, ResourceOrigin _origin)
@@ -69,6 +73,22 @@ struct Resource
         data = str;
         type = _type;
         lang = _lang;
+    }
+
+    this(string str, LANG _lang = LANG.NONE)
+    {
+        data = str;
+        type = ResourceType.String;
+        lang = _lang;
+    }
+
+    this(ResourceType _type, bool val)
+    {
+    	if (val == true)
+    		data = "1";
+    	else	
+    		data = "0";
+        type = _type;
     }
 
     string uri()
@@ -119,3 +139,7 @@ bool anyExist(Resources rss, string object)
     return false;
 }
 
+//void addPredicate(Resources rss, string pp, string oo)
+//{
+//	rss[pp] ~= Resource (oo); 
+//}
