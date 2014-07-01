@@ -33,7 +33,7 @@ logger log;
 
 static this()
 {
-    log = new logger("pacahon", "log", "context");
+    log = new logger("pacahon", "log", "API");
 }
 
 Tid    dummy_tid;
@@ -231,35 +231,23 @@ class PThreadContext : Context
         return name;
     }
 
-    public immutable(Class)[ string ] get_owl_classes()
+    public immutable(Class)[ string ] iget_owl_classes()
     {
         if (owl !is null)
         {
-            check_for_reload("owl", &owl.load);
-            return owl.owl_classes;
+            check_for_reload("onto", &owl.load);
+            return owl.iget_classes();
         }
         else
             return (immutable(Class)[ string ]).init;
     }
 
-/*
-    Class *[] owl_classes()
+    public immutable(Class) * iget_class(string uri)
     {
         if (owl !is null)
         {
-                owl.check_for_reload();
-            return owl.class_2_idx.values;
-        }
-        else
-            return (Class *[]).init;
-    }
- */
-    public Class *get_class(string uri)
-    {
-        if (owl !is null)
-        {
-            check_for_reload("owl", &owl.load);
-            return owl.getClass(uri);
+            check_for_reload("onto", &owl.load);
+            return uri in owl.iget_classes();
         }
         else
             return null;
@@ -269,7 +257,7 @@ class PThreadContext : Context
     {
         if (owl !is null)
         {
-            check_for_reload("owl", &owl.load);
+            check_for_reload("onto", &owl.load);
             return owl.getProperty(uri);
         }
         else
@@ -280,8 +268,8 @@ class PThreadContext : Context
     {
         if (owl !is null)
         {
-            check_for_reload("owl", &owl.load);
-            return owl.individuals;
+            check_for_reload("onto", &owl.load);
+            return owl.iget_individuals;
         }
         else
             return (immutable(Individual)[ string ]).init;
@@ -290,7 +278,10 @@ class PThreadContext : Context
 
     public string get_individual_as_cbor(string uri)
     {
-        return inividuals_storage.find(uri);
+        //writeln ("@ get_individual_as_cbor, uri=", uri);
+        auto res = inividuals_storage.find(uri);
+
+        return res;
     }
 ///////////////////////////////////////////// oykumena ///////////////////////////////////////////////////
 
@@ -304,6 +295,8 @@ class PThreadContext : Context
             {
                 send(tid_interthread_signals, CMD.PUT, key, value);
             }
+
+            set_reload_signal_to_local_thread(key);
         }
         catch (Exception ex)
         {
@@ -356,22 +349,9 @@ class PThreadContext : Context
 
     public int[ string ] get_key2slot()
     {
-        int[ string ] key2slot;
-        send(getTid(P_MODULE.xapian_thread_context), CMD.GET, CNAME.KEY2SLOT, thisTid);
-        receive((string msg)
-                {
-                    if (msg != old_msg_key2slot)
-                    {
-                        key2slot = deserialize_key2slot(msg);
-                        old_msg_key2slot = msg;
-                        old_key2slot = key2slot;
-                    }
-                    else
-                        key2slot = old_key2slot;
+        string key2slot_str = inividuals_storage.find(xapian_metadata_doc_id);
 
-                    //writeln ("@get_key2slot=", key2slot);
-                });
-
+        int[ string ] key2slot = deserialize_key2slot(key2slot_str);
         return key2slot;
     }
 
@@ -391,10 +371,10 @@ class PThreadContext : Context
         long   duration;
 
         tt.id       = ticket.uri;
-        tt.user_uri = ticket.getFirstResource(ticket__accessor).data;
-        when        = ticket.getFirstResource(ticket__when).data;
-        string dd   = ticket.getFirstResource(ticket__duration).data;
-        duration    = parse!uint (dd);
+        tt.user_uri = ticket.getFirstLiteral(ticket__accessor);
+        when        = ticket.getFirstLiteral(ticket__when);
+        string dd = ticket.getFirstLiteral(ticket__duration);
+        duration = parse!uint (dd);
 
 //				writeln ("tt.userId=", tt.userId);
 
@@ -450,7 +430,7 @@ class PThreadContext : Context
 
     Signal *[ string ] signals;
 
-    public void set_local_signal_for_reload(string interthread_signal_id)
+    public void set_reload_signal_to_local_thread(string interthread_signal_id)
     {
         Signal *signal = signals.get(interthread_signal_id, null);
 
@@ -462,6 +442,10 @@ class PThreadContext : Context
 
         long now = Clock.currStdTime() / 10000;
         signal.last_time_update = now;
+
+        if (trace_msg[ 19 ] == 1)
+            log.trace("[%s] SET RELOAD LOCAL SIGNAL [%s], signal.last_time_update=%d", name, interthread_signal_id,
+                      signal.last_time_update);
     }
 
     public bool check_for_reload(string interthread_signal_id, void delegate() load)
@@ -475,28 +459,37 @@ class PThreadContext : Context
         }
 
         long now = Clock.currStdTime() / 10000;
+
+        if (trace_msg[ 19 ] == 1)
+            log.trace("[%s] CHECK FOR RELOAD [%s], last_time_update=%d, last_time_check=%d", name, interthread_signal_id,
+                      now - signal.last_time_update, now - signal.last_time_check);
+
         if (signal.last_time_update > signal.last_time_check)
         {
             signal.last_time_check = now;
             if (trace_msg[ 19 ] == 1)
-                log.trace("RELOAD for %s, signal.last_time_update(%d) > signal.last_time_check(%d)", interthread_signal_id,
-                          signal.last_time_update, signal.last_time_check);
+                log.trace("[%s] RELOAD FOR [%s], last_time_update > last_time_check", name, interthread_signal_id);
 
             load();
+
             return true;
         }
-        else
-        if (now - signal.last_time_check > 10000 || now - signal.last_time_check < 0)
+        else if (now - signal.last_time_check > 10000 || now - signal.last_time_check < 0)
         {
             signal.last_time_check = now;
 
             long now_time_signal = look_integer_signal(interthread_signal_id);
-            if (now_time_signal - signal.last_time_update > 10000 || now_time_signal - signal.last_time_update <= 0)
+
+            if (trace_msg[ 19 ] == 1)
+                log.trace("[%s] RELOAD for [%s], (now_time_signal - signal.last_time_update)=%d", name, interthread_signal_id,
+                          now_time_signal - signal.last_time_update);
+
+            if (now_time_signal - signal.last_time_update > 10000 || now_time_signal - signal.last_time_update < 0 || now_time_signal == 0)
             {
                 signal.last_time_update = now_time_signal;
 
                 if (trace_msg[ 19 ] == 1)
-                    log.trace("RELOAD for %s", interthread_signal_id);
+                    log.trace("[%s] RELOAD FOR [%s]", name, interthread_signal_id);
 
                 load();
 
@@ -588,37 +581,30 @@ class PThreadContext : Context
             if (trace_msg[ 18 ] == 1)
                 log.trace("authenticate, login=[%s] password=[%s]", login, password);
 
-            Ticket                  ticket;
+            Ticket ticket;
             ticket.result = ResultCode.Authentication_Failed;
-            Ticket                  *sys_ticket;
 
-            immutable(Individual)[] candidate_users = get_individuals_via_query(sys_ticket,
-                                                                                "'" ~ veda_schema__login ~ "' == '" ~ login ~ "'");
-            if (trace_msg[ 18 ] == 1)
-               	log.trace("authenticate, candidate_users=[%s]", candidate_users);
+            Ticket       *sys_ticket;
 
+            Individual[] candidate_users = get_individuals_via_query(sys_ticket, "'" ~ veda_schema__login ~ "' == '" ~ login ~ "'");
             foreach (user; candidate_users)
             {
                 string user_id = user.getFirstResource(veda_schema__owner).uri;
                 if (user_id is null)
                     continue;
 
-                if (trace_msg[ 18 ] == 1)
-                	log.trace("authenticate, user_id=[%s]", user_id);
-
-
-                iResources pass = user.resources.get(veda_schema__password, _empty_iResources);
-                if (pass.length > 0 && pass[ 0 ].data == password)
+                Resources pass = user.resources.get(veda_schema__password, _empty_Resources);
+                if (pass.length > 0 && pass[ 0 ] == password)
                 {
                     Individual new_ticket;
-                    new_ticket.resources[rdf__type] ~= Resource(ticket__Ticket);
+                    new_ticket.resources[ rdf__type ] ~= Resource(ticket__Ticket);
 
                     UUID new_id = randomUUID();
                     new_ticket.uri = new_id.toString();
 
-                    new_ticket.resources[ticket__accessor] ~= Resource(user_id);
-                    new_ticket.resources[ticket__when] ~= Resource(getNowAsString());
-                    new_ticket.resources[ticket__duration] ~= Resource("40000");
+                    new_ticket.resources[ ticket__accessor ] ~= Resource(user_id);
+                    new_ticket.resources[ ticket__when ] ~= Resource(getNowAsString());
+                    new_ticket.resources[ ticket__duration ] ~= Resource("40000");
 
                     if (trace_msg[ 18 ] == 1)
                         log.trace("authenticate, ticket__accessor=%s", user_id);
@@ -739,10 +725,8 @@ class PThreadContext : Context
         }
     }
 
-    public immutable(Individual)[] get_individuals_via_query(Ticket * ticket, string query_str)
+    public Individual[] get_individuals_via_query(Ticket *ticket, string query_str)
     {
-        immutable(Individual)[] res;
-        
         StopWatch sw; sw.start;
 
         if (trace_msg[ 26 ] == 1)
@@ -755,6 +739,7 @@ class PThreadContext : Context
 
         try
         {
+            Individual[] res;
             if (query_str.indexOf("==") <= 0)
                 query_str = "'*' == '" ~ query_str ~ "'";
 
@@ -766,9 +751,40 @@ class PThreadContext : Context
             stat(CMD.GET, sw);
 
             if (trace_msg[ 26 ] == 1)
-                log.trace("get_individuals_via_query: end, query_str=%s, found=%d", query_str, res.length);
+                log.trace("get_individuals_via_query: end, query_str=%s", query_str);
         }
     }
+
+    public immutable(Individual)[] iget_individuals_via_query(Ticket * ticket, string query_str)
+    {
+        StopWatch sw; sw.start;
+
+        if (trace_msg[ 26 ] == 1)
+        {
+            if (ticket !is null)
+                log.trace("iget_individuals_via_query: start, query_str=%s, ticket=%s", query_str, ticket.id);
+            else
+                log.trace("iget_individuals_via_query: start, query_str=%s, ticket=null", query_str);
+        }
+
+        try
+        {
+            immutable(Individual)[] res;
+            if (query_str.indexOf("==") <= 0)
+                query_str = "'*' == '" ~ query_str ~ "'";
+
+            vql.get(ticket, query_str, null, null, 10, 10000, res);
+            return res;
+        }
+        finally
+        {
+            stat(CMD.GET, sw);
+
+            if (trace_msg[ 26 ] == 1)
+                log.trace("iget_individuals_via_query: end, query_str=%s", query_str);
+        }
+    }
+
 
     public Individual[] get_individuals(Ticket *ticket, string[] uris)
     {
@@ -826,7 +842,9 @@ class PThreadContext : Context
                     individual.setStatus(ResultCode.OK);
                 }
                 else
+                {
                     individual.setStatus(ResultCode.Unprocessable_Entity);
+                }
             }
             else
             {
@@ -834,6 +852,7 @@ class PThreadContext : Context
                     log.trace("get_individual, not authorized, uri=%s", uri);
                 individual.setStatus(ResultCode.Not_Authorized);
             }
+
             return individual;
         }
         finally
@@ -847,11 +866,14 @@ class PThreadContext : Context
     public ResultCode store_individual(Ticket *ticket, Individual *indv, string ss_as_cbor, bool prepareEvents = true)
     {
         StopWatch sw; sw.start;
-        
+
         try
         {
             Tid tid_subject_manager;
             Tid tid_acl;
+
+            if (trace_msg[ 27 ] == 1)
+                log.trace("[%s] store_individual", name);
 
             if (indv is null && ss_as_cbor is null)
                 return ResultCode.No_Content;
@@ -870,11 +892,11 @@ class PThreadContext : Context
                 return ResultCode.No_Content;
 
             if (trace_msg[ 27 ] == 1)
-            	log.trace ("store_individual: %s", *indv);
+                log.trace("[%s] store_individual: %s", name, *indv);
 
             Resource[ string ] rdfType;
             setMapResources(indv.resources[ rdf__type ], rdfType);
-            
+
             if (rdfType.anyExist(veda_schema__Membership) == true)
             {
                 // before storing the data, expected availability acl_manager.
@@ -913,7 +935,8 @@ class PThreadContext : Context
 
                 if (tid_search_manager != Tid.init)
                 {
-                    set_local_signal_for_reload("search");
+                    push_signal("search", Clock.currStdTime() / 10000);
+
                     send(tid_search_manager, CMD.STORE, ss_as_cbor);
                 }
 
@@ -984,64 +1007,69 @@ class PThreadContext : Context
 
     public bool backup(int level = 0)
     {
-    	if (level == 0)
-    		freeze ();
-    	   	
-        bool result = false;
+        if (level == 0)
+            freeze();
 
-        Tid  tid_subject_manager = getTid(P_MODULE.subject_manager);
-
-        send(tid_subject_manager, CMD.BACKUP, "", thisTid);
-        string backup_id;
-        receive((string res) { backup_id = res; });
-
-        if (backup_id != "")
+        try
         {
-            result = true;
+            bool result = false;
 
-            string res;
-            Tid    tid_acl_manager = getTid(P_MODULE.acl_manager);
-            send(tid_acl_manager, CMD.BACKUP, backup_id, thisTid);
-            receive((string _res) { res = _res; });
-            if (res == "")
-                result = false;
-            else
+            Tid  tid_subject_manager = getTid(P_MODULE.subject_manager);
+
+            send(tid_subject_manager, CMD.BACKUP, "", thisTid);
+            string backup_id;
+            receive((string res) { backup_id = res; });
+
+            if (backup_id != "")
             {
-                Tid tid_ticket_manager = getTid(P_MODULE.ticket_manager);
-                send(tid_ticket_manager, CMD.BACKUP, backup_id, thisTid);
+                result = true;
+
+                string res;
+                Tid    tid_acl_manager = getTid(P_MODULE.acl_manager);
+                send(tid_acl_manager, CMD.BACKUP, backup_id, thisTid);
                 receive((string _res) { res = _res; });
                 if (res == "")
                     result = false;
                 else
                 {
-                    Tid tid_fulltext_indexer = getTid(P_MODULE.fulltext_indexer);
-                    send(tid_fulltext_indexer, CMD.BACKUP, backup_id, thisTid);
+                    Tid tid_ticket_manager = getTid(P_MODULE.ticket_manager);
+                    send(tid_ticket_manager, CMD.BACKUP, backup_id, thisTid);
                     receive((string _res) { res = _res; });
                     if (res == "")
                         result = false;
+                    else
+                    {
+                        Tid tid_fulltext_indexer = getTid(P_MODULE.fulltext_indexer);
+                        send(tid_fulltext_indexer, CMD.BACKUP, backup_id, thisTid);
+                        receive((string _res) { res = _res; });
+                        if (res == "")
+                            result = false;
+                    }
                 }
             }
-        }
 
-        if (result == false)
-        {
-            if (level < 10)
+            if (result == false)
             {
-                log.trace_log_and_console("BACKUP FAIL, repeat(%d) %s", level, backup_id);
+                if (level < 10)
+                {
+                    log.trace_log_and_console("BACKUP FAIL, repeat(%d) %s", level, backup_id);
 
-                core.thread.Thread.sleep(dur!("msecs")(500));
-                return backup(level + 1);
+                    core.thread.Thread.sleep(dur!("msecs")(500));
+                    return backup(level + 1);
+                }
+                else
+                    log.trace_log_and_console("BACKUP FAIL, %s", backup_id);
             }
             else
-                log.trace_log_and_console("BACKUP FAIL, %s", backup_id);
+                log.trace_log_and_console("BACKUP Ok, %s", backup_id);
+
+            return result;
         }
-        else
-            log.trace_log_and_console("BACKUP Ok, %s", backup_id);
-
-    	if (level == 0)
-    		unfreeze ();
-
-        return result;
+        finally
+        {
+            if (level == 0)
+                unfreeze();
+        }
     }
 
     public long count_individuals()
@@ -1051,17 +1079,19 @@ class PThreadContext : Context
 
     public void freeze()
     {
+        writeln("FREEZE");
         Tid tid_subject_manager = getTid(P_MODULE.subject_manager);
 
         if (tid_subject_manager != Tid.init)
         {
             send(tid_subject_manager, CMD.FREEZE, thisTid);
-            receive((bool _res) {});            
+            receive((bool _res) {});
         }
     }
 
     public void unfreeze()
     {
+        writeln("UNFREEZE");
         Tid tid_subject_manager = getTid(P_MODULE.subject_manager);
 
         if (tid_subject_manager != Tid.init)

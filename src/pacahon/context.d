@@ -12,20 +12,21 @@ private import bind.v8d_header;
 
 enum CMD : byte
 {
-    STORE     = 1,
-    PUT       = 1,
-    FIND      = 2,
-    GET       = 2,
-    EXAMINE   = 4,
-    AUTHORIZE = 8,
-    COMMIT    = 16,
-    END_DATA  = 32,
-    SET_TRACE = 33,
-    RELOAD    = 40,
-    BACKUP    = 41,
-    FREEZE    = 42,
-    UNFREEZE  = 43,
-    NOP       = 64
+    STORE        = 1,
+    PUT          = 1,
+    FIND         = 2,
+    GET          = 2,
+    EXAMINE      = 4,
+    AUTHORIZE    = 8,
+    COMMIT       = 16,
+    END_DATA     = 32,
+    SET_TRACE    = 33,
+    RELOAD       = 40,
+    BACKUP       = 41,
+    FREEZE       = 42,
+    UNFREEZE     = 43,
+    PUT_KEY2SLOT = 44,
+    NOP          = 64
 }
 
 enum P_MODULE : byte
@@ -59,6 +60,9 @@ enum ResultCode
     Not_Authorized        = 472,
     Authentication_Failed = 473,
     Not_Ready             = 474,
+    Fail_Open_Transaction = 475,
+    Fail_Commit           = 476,
+    Fail_Store            = 477,
     Internal_Server_Error = 500,
     Not_Implemented       = 501,
     Service_Unavailable   = 503,
@@ -119,6 +123,7 @@ interface Context
     void push_signal(string key, string value);
     long look_integer_signal(string key);
     string look_string_signal(string key);
+    void set_reload_signal_to_local_thread(string interthread_signal_id);
 
     // *************************************************** external api *********************************** //
     bool authorize(string uri, Ticket *ticket, Access request_acess);
@@ -126,9 +131,9 @@ interface Context
     public string[ 2 ] execute_script(string str);
 
     //////////////////////////////////////////////////// ONTO //////////////////////////////////////////////
-    public immutable(Class)[ string ] get_owl_classes();
+    public immutable(Class)[ string ] iget_owl_classes();
     public immutable(Individual)[ string ] get_onto_as_map_individuals();
-    public Class *get_class(string ur);
+    public immutable(Class) * iget_class(string ur);
 
     //////////////////////////////////////////////////// TICKET //////////////////////////////////////////////
     public Ticket authenticate(string login, string password);
@@ -136,10 +141,11 @@ interface Context
     public bool is_ticket_valid(string ticket_id);
 
     ////////////////////////////////////////////// INDIVIDUALS IO ////////////////////////////////////////////
-    public immutable(Individual)[] get_individuals_via_query(Ticket * ticket, string query_str);
+    public Individual[]            get_individuals_via_query(Ticket *ticket, string query_str);
+    public immutable(Individual)[] iget_individuals_via_query(Ticket * ticket, string query_str);
     public immutable(string)[]     get_individuals_ids_via_query(Ticket * ticket, string query_str);
     public Individual               get_individual(Ticket *ticket, string uri);
-    public Individual[]             get_individuals(Ticket *ticket, string[] uris);
+    public Individual[]            get_individuals(Ticket *ticket, string[] uris);
 
     public ResultCode store_individual(Ticket *ticket, Individual *indv, string ss_as_cbor, bool prepareEvents = true);
     public ResultCode put_individual(Ticket *ticket, string uri, Individual individual);
@@ -149,7 +155,7 @@ interface Context
     public void set_trace(int idx, bool state);
 
     public long count_individuals();
-    
+
     public bool backup(int level = 0);
     public void freeze();
     public void unfreeze();

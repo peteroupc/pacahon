@@ -19,18 +19,18 @@ alias Individual[] Individuals;
 
 struct Individual
 {
-    string uri;
+    string             uri;
     Resources[ string ]    resources;
     private ResultCode rc;
 
-    ResultCode getStatus ()
+    ResultCode         getStatus()
     {
-    	return rc;
+        return rc;
     }
-    
-    void setStatus (ResultCode _rc)
+
+    void setStatus(ResultCode _rc)
     {
-    	rc = _rc;
+        rc = _rc;
     }
 
     immutable this(string _uri, immutable(Resources[ string ]) _resources)
@@ -59,16 +59,30 @@ struct Individual
         return Resource.init;
     }
 
-    immutable Resource getFirstResource(string predicate)
+    string getFirstLiteral(string predicate)
     {
-        immutable Resources rss = resources.get(predicate, (immutable Resources).init);
+        Resources rss;
+
+        rss = resources.get(predicate, rss);
+        if (rss.length > 0)
+            return rss[ 0 ].literal;
+
+        return null;
+    }
+/*
+    Resource getFirstIResource(string predicate)
+    {
+        Resources rss = resources.get(predicate, Resources.init);
 
         if (rss.length > 0)
-            return rss[ 0 ];
+        {
+                Resource ir = rss[ 0 ];
+            return ir;
+        }
 
         return Resource.init;
     }
-
+ */
     Resources getResources(string predicate)
     {
         Resources rss;
@@ -77,20 +91,24 @@ struct Individual
         return rss;
     }
 
-    bool isExist(string predicate, string object)
+    bool isExist(T) (string predicate, T object)
     {
         Resources rss;
 
         rss = resources.get(predicate, rss);
         foreach (rs; rss)
         {
-            if (rs.data == object)
+            //writeln ("@rs=[", rs.get!string, "] object=[", object, "]");
+            if (rs == object)
+            {
+                //writeln ("@ true");
                 return true;
+            }
         }
         return false;
     }
 
-    bool anyExist(string predicate, string[] objects)
+    bool anyExist(T) (string predicate, T[] objects)
     {
         Resources rss;
 
@@ -99,7 +117,7 @@ struct Individual
         {
             foreach (object; objects)
             {
-                if (rs.data == object)
+                if (rs == object)
                     return true;
             }
         }

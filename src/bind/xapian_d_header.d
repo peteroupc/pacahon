@@ -256,6 +256,7 @@ interface XapianDatabase
 {
     XapianEnquire new_Enquire(byte *err);
     void close(byte *err);
+    void reopen (byte *err);
 }
 
 interface XapianWritableDatabase
@@ -362,4 +363,6 @@ void destroy_MSetIterator(XapianMSetIterator msetit);
 void destroy_Query(XapianQuery query);
 void destroy_Enquire(XapianEnquire enquire);
 void destroy_MultiValueKeyMaker(XapianMultiValueKeyMaker sorter);
+void destroy_Database(XapianDatabase db);
+
 }
