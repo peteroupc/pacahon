@@ -65,11 +65,7 @@ private static int read_element(Individual *individual, ubyte[] src, out string 
 
             Resources resources = individual.resources.get(predicate_uri, Resources.init);
 
-            if (header.tag == TAG.TEXT_RU)
-                resources ~= Resource(ResourceType.String, str, LANG.RU);
-            else if (header.tag == TAG.TEXT_EN)
-                resources ~= Resource(ResourceType.String, str, LANG.EN);
-            else if (header.tag == TAG.URI)
+            if (header.tag == TAG.URI)
             {
                 if (str.indexOf('/') > 0)
                     resources ~= Resource(str, ResourceOrigin.external);
@@ -108,6 +104,20 @@ private static int read_element(Individual *individual, ubyte[] src, out string 
         {
             pos += read_element(individual, src[ pos..$ ], dummy, subject_uri, predicate_uri);
         }
+        if (subject_uri !is null && predicate_uri !is null)
+        {
+            Resources resources = individual.resources.get(predicate_uri, Resources.init);
+            if (header.tag == 38) {
+              // TODO: Use case insensitive matching of the language tag
+              if (src[0] == "ru"){
+                  resources ~= Resource(ResourceType.String, src[1], LANG.RU);            
+                  individual.resources[ predicate_uri ] = resources;
+             } else if (src[0] == "en"){
+                  resources ~= Resource(ResourceType.String, src[1], LANG.EN);                        
+                  individual.resources[ predicate_uri ] = resources;
+             }
+           }
+        }
     }
     return pos;
 }
@@ -145,9 +155,24 @@ private void write_resources(string uri, ref Resources vv, ref OutBuffer ou)
         }
         else
         {
-            if (value.lang != LANG.NONE)
-                write_header(MajorType.TAG, value.lang + 257, ou);
-            write_string(value.get!string, ou);
+            if (value.lang == LANG.RU) 
+            {
+              write_header(MajorType.TAG, 38, ou);
+              write_header(MajorType.ARRAY, 2, ou);
+              write_string("ru", ou);
+              write_string(value.get!string, ou);              
+            }
+            else if (value.lang == LANG.EN)
+            {
+              write_header(MajorType.TAG, 38, ou);
+              write_header(MajorType.ARRAY, 2, ou);
+              write_string("en", ou);
+               write_string(value.get!string, ou);              
+            }
+            else
+            {
+               write_string(value.get!string, ou);
+            }
         }
     }
 }

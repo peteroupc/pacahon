@@ -64,9 +64,7 @@ enum TAG
 {
     NONE                        = -1,
 
-    TEXT_RU                     = 258,
-
-    TEXT_EN                     = 259,
+    TEXT_LANGSTRING                     = 38,
 /** date/time values in the standard format (UTF8 string, RFC3339). */
     STANDARD_DATE_TIME          = 0,
 /** date/time values as Epoch timestamp (numeric, RFC3339). */
